@@ -263,6 +263,19 @@ function registerIpcHandlers(): void {
     BrowserWindow.fromWebContents(event.sender)?.minimize()
   })
 
+  ipcMain.handle('window:get-bounds', (event) => {
+    return BrowserWindow.fromWebContents(event.sender)?.getBounds() ?? { x: 0, y: 0, width: 0, height: 0 }
+  })
+
+  ipcMain.handle('window:set-position', (event, x: number, y: number) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (window && Number.isFinite(x) && Number.isFinite(y)) window.setPosition(Math.round(x), Math.round(y))
+  })
+
+  ipcMain.handle('window:is-maximized', (event) => {
+    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false
+  })
+
   ipcMain.handle('window:toggle-maximize', (event) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window) return false

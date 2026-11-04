@@ -37,7 +37,7 @@ code, kbd, textarea, .eyebrow { font-family: "Cascadia Code", "SFMono-Regular", 
 
 .icon { display: block; flex: 0 0 auto; }
 .app-shell { display: grid; grid-template-rows: 43px minmax(0, 1fr); height: 100%; background: linear-gradient(180deg, rgba(255,255,255,0.012), transparent 18%); }
-.titlebar { z-index: 20; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; padding: 0 8px 0 14px; border-bottom: 1px solid #172333; background: rgba(8, 12, 19, 0.96); -webkit-app-region: drag; }
+.titlebar { z-index: 20; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; padding: 0 8px 0 14px; border-bottom: 1px solid #172333; background: rgba(8, 12, 19, 0.96); cursor: default; }
 .title-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand-mark { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid rgba(55, 216, 180, 0.28); border-radius: 8px; background: linear-gradient(145deg, rgba(55, 216, 180, 0.2), rgba(55, 216, 180, 0.03)); }
 .brand-mark svg { width: 20px; height: 20px; fill: none; stroke: #71f5da; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
@@ -576,3 +576,31 @@ code, kbd, textarea, .eyebrow { font-family: "Cascadia Code", "SFMono-Regular", 
 .layout-switch.is-on { border-color: rgba(55, 216, 180, 0.4); background: rgba(55, 216, 180, 0.14); }
 .layout-switch.is-on span { transform: translateX(14px); background: #37d8b4; }
 .layout-menu-tip { margin: 9px 0 0; color: #4e6178; font-size: 0.5rem; line-height: 1.6; }
+
+/* Window dragging: titlebar + session bar empty areas */
+.titlebar { user-select: none; }
+.session-bar { height: 36px; flex-basis: 36px; user-select: none; }
+.session-bar button { -webkit-app-region: no-drag; }
+
+/* Slimmer sidebar / tab tree */
+.dock-tabs { height: 34px; flex-basis: 34px; }
+.side-toolbar { gap: 6px; padding: 8px 10px 6px; }
+.side-search { height: 27px; border-radius: 6px; }
+.side-summary { padding: 0 12px 6px; }
+.fingerprint-card, .knowledge-card { margin-bottom: 6px; padding: 7px 9px; border-radius: 7px; }
+.fingerprint-query { margin-top: 5px; line-height: 1.45; -webkit-line-clamp: 1; }
+.fingerprint-tags { gap: 3px; margin-top: 5px; }
+.fingerprint-actions { margin-top: 6px; padding-top: 5px; }
+.knowledge-parent { margin: 4px 0 0 11px; }
+.knowledge-meta { margin-top: 4px; }
+.knowledge-note { margin-top: 4px; -webkit-line-clamp: 1; }
+.side-footer { flex-basis: 34px; padding: 5px 10px; }
+.tab-tree-head { padding: 8px 10px 6px; }
+.tab-tree-head > div:first-child { margin-bottom: 6px; }
+.tab-tree-tools button { height: 23px; }
+.tree-root-drop { padding: 5px 6px 10px; }
+.tree-tab-row { height: 25px; margin-bottom: 1px; }
+.tree-kind-dot { width: 17px; height: 17px; border-radius: 4px; }
+.tree-expander { height: 17px; }
+.tree-tab-close { width: 16px; height: 16px; }
+.tab-tree-hint { padding: 6px 10px; }

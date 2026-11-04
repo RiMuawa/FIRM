@@ -695,6 +695,50 @@ function App() {
     setLayout((current) => ({ ...current, sidebar: { ...current.sidebar, visible: true } }))
   }
 
+  function startWindowDrag(event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0) return
+    if ((event.target as HTMLElement).closest('button, input, select, textarea, a')) return
+    event.preventDefault()
+    const handle = event.currentTarget
+    const api = window.electronAPI
+    const startScreenX = event.screenX
+    const startScreenY = event.screenY
+    const grabOffsetY = event.clientY
+    const grabRatioX = event.clientX / Math.max(1, window.innerWidth)
+    let originX = 0
+    let originY = 0
+    let ready = false
+
+    void (async () => {
+      if (await api.isWindowMaximized()) {
+        await api.toggleMaximizeWindow()
+        const bounds = await api.getWindowBounds()
+        originX = Math.round(startScreenX - bounds.width * grabRatioX)
+        originY = Math.round(startScreenY - grabOffsetY)
+        await api.setWindowPosition(originX, originY)
+      } else {
+        const bounds = await api.getWindowBounds()
+        originX = bounds.x
+        originY = bounds.y
+      }
+      ready = true
+    })()
+
+    const move = (moveEvent: globalThis.PointerEvent) => {
+      if (!ready) return
+      void api.setWindowPosition(originX + moveEvent.screenX - startScreenX, originY + moveEvent.screenY - startScreenY)
+    }
+    const stop = () => {
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', stop)
+      handle.removeEventListener('pointercancel', stop)
+    }
+    try { handle.setPointerCapture(event.pointerId) } catch { /* 某些环境下指针捕获不可用，退化为普通监听 */ }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', stop)
+    handle.addEventListener('pointercancel', stop)
+  }
+
   function startLeftResize(event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault()
     const startX = event.clientX
@@ -738,7 +782,7 @@ function App() {
 
   return (
     <div className="app-shell">
-      <header className="titlebar">
+      <header className="titlebar" onPointerDown={startWindowDrag} onDoubleClick={(event) => { if ((event.target as HTMLElement).closest('button, input, select, a')) return; void window.electronAPI.toggleMaximizeWindow() }}>
         <div className="title-brand"><span className="brand-mark"><BrandMark /></span><div><strong>IoT Worktable</strong><small>FOFA 资产工作台</small></div></div>
         <div className="title-center"><span className="live-dot" /><span>{info ? `${platformLabels[info.platform] || info.platform} · Electron ${info.electron}` : '正在连接主进程…'}</span></div>
         <div className="title-actions"><button className="titlebar-icon" type="button" onClick={() => setLayoutMenuOpen((open) => !open)} title="面板布局"><Icon name="layout" size={15} /></button><button className={`key-chip ${keyStatus.configured ? 'is-ready' : ''}`} type="button" onClick={() => setSettingsOpen(true)}><span className="status-dot" /> {keyStatus.configured ? '数据源已连接' : '配置数据源'}</button><button className="titlebar-icon" type="button" onClick={() => void window.electronAPI.minimizeWindow()} title="最小化"><Icon name="minimize" size={14} /></button><button className="titlebar-icon" type="button" onClick={() => void window.electronAPI.toggleMaximizeWindow()} title="最大化"><Icon name="maximize" size={13} /></button><button className="titlebar-icon close" type="button" onClick={() => void window.electronAPI.closeWindow()} title="关闭"><Icon name="close" size={14} /></button></div>
@@ -763,7 +807,7 @@ function App() {
         {layout.sidebar.visible && <div className={`splitter vertical ${layout.sidebar.side === 'right' ? 'is-right' : ''}`} onPointerDown={startLeftResize} />}
 
         <main className="main-dock">
-          {layout.sessionBar && <div className="session-bar">
+          {layout.sessionBar && <div className="session-bar" onPointerDown={startWindowDrag} onDoubleClick={(event) => { if ((event.target as HTMLElement).closest('button, input, select, a')) return; void window.electronAPI.toggleMaximizeWindow() }}>
             <button className={`tree-toggle ${layout.tabtree.visible ? 'is-on' : ''}`} type="button" onClick={() => setLayout((current) => ({ ...current, tabtree: { ...current.tabtree, visible: !current.tabtree.visible } }))} title="显示/隐藏标签树">
               <Icon name="folder" size={14} /> 标签树 <b>{sessions.length}</b>
             </button>

@@ -83,6 +83,9 @@ export interface ElectronAPI {
   openDocumentation: () => Promise<void>
   openExternal: (url: string) => Promise<void>
   minimizeWindow: () => Promise<void>
+  getWindowBounds: () => Promise<{ x: number; y: number; width: number; height: number }>
+  setWindowPosition: (x: number, y: number) => Promise<void>
+  isWindowMaximized: () => Promise<boolean>
   toggleMaximizeWindow: () => Promise<boolean>
   closeWindow: () => Promise<void>
   getFofaKeyStatus: () => Promise<FofaKeyStatus>
