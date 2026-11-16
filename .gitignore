@@ -9,3 +9,12 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+.zcode/
+
+# 临时测试截图（冒烟/截图脚本产物）
+smoke-*.png
+
+# 本地密钥与私有配置（本项目涉及 FOFA API Key，防止误提交）
+.env
+.env.*
+*.local

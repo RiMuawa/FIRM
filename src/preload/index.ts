@@ -1,23 +1,23 @@
-﻿import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 import type { ElectronAPI } from '../shared/types'
 
 const electronAPI: ElectronAPI = {
   getAppInfo: () => ipcRenderer.invoke('app:get-info'),
   openDocumentation: () => ipcRenderer.invoke('shell:open-docs'),
-  openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
+  openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
   getWindowBounds: () => ipcRenderer.invoke('window:get-bounds'),
-  setWindowPosition: (x: number, y: number) => ipcRenderer.invoke('window:set-position', x, y),
+  setWindowPosition: (x, y) => ipcRenderer.invoke('window:set-position', x, y),
   isWindowMaximized: () => ipcRenderer.invoke('window:is-maximized'),
   toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
-  getFofaKeyStatus: () => ipcRenderer.invoke('fofa:key-status'),
-  saveFofaKey: (key: string) => ipcRenderer.invoke('fofa:key-save', key),
-  clearFofaKey: () => ipcRenderer.invoke('fofa:key-clear'),
-  validateFofaKey: () => ipcRenderer.invoke('fofa:key-validate'),
+  getFofaStatus: () => ipcRenderer.invoke('fofa:status'),
+  setActiveFofaProvider: (provider) => ipcRenderer.invoke('fofa:set-active-provider', provider),
+  saveFofaKey: (provider, key, email) => ipcRenderer.invoke('fofa:key-save', provider, key, email),
+  clearFofaKey: (provider) => ipcRenderer.invoke('fofa:key-clear', provider),
+  validateFofaKey: (provider) => ipcRenderer.invoke('fofa:key-validate', provider),
   searchFofa: (request) => ipcRenderer.invoke('fofa:search', request),
-  getFofaStats: (request) => ipcRenderer.invoke('fofa:stats', request),
-  generateFofaQuery: (question: string) => ipcRenderer.invoke('fofa:ai-query', question)
+  getUsageStats: () => ipcRenderer.invoke('stats:get-usage')
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

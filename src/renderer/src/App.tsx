@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import type {
   AppInfo,
-  FofaKeyStatus,
+  FofaDataSourceStatus,
   FofaKeyValidation,
+  FofaProvider,
+  FofaProviderStatus,
   FofaQuota,
   FofaSearchResponse
 } from '../../shared/types'
@@ -12,6 +14,7 @@ import {
   createFingerprint,
   formatDate,
   groupAssets,
+  groupByFolder,
   loadFingerprints,
   loadKnowledge,
   loadLastQuery,
@@ -22,7 +25,8 @@ import {
   saveKnowledge,
   saveLastQuery,
   type Fingerprint,
-  type KnowledgeEntry
+  type KnowledgeEntry,
+  type WorkspaceScope
 } from './data'
 import TabTree from './components/TabTree'
 import QueryEditor from './components/QueryEditor'
@@ -30,12 +34,13 @@ import PresetManager from './components/PresetManager'
 import { cardsToQuery, dedupeQuery, mergeCards, parseQueryToCards } from './query/editorModel'
 import EmbeddedBrowser from './components/EmbeddedBrowser'
 import type { BrowserMeta } from './components/EmbeddedBrowser'
+import StatsPanel from './components/StatsPanel'
 
 type IconName =
   | 'radar' | 'search' | 'settings' | 'library' | 'knowledge' | 'plus' | 'close'
   | 'play' | 'external' | 'star' | 'edit' | 'trash' | 'save' | 'download'
   | 'upload' | 'copy' | 'refresh' | 'folder' | 'server' | 'chevron' | 'spark'
-  | 'terminal' | 'minimize' | 'maximize' | 'check' | 'layout'
+  | 'terminal' | 'minimize' | 'maximize' | 'check' | 'layout' | 'chart'
 
 type SessionStatus = 'idle' | 'loading' | 'success' | 'error'
 
@@ -43,6 +48,7 @@ interface SearchSession {
   kind: 'search' | 'browser'
   id: string
   parentId?: string
+  folder?: string
   label: string
   query: string
   page: number
@@ -139,7 +145,8 @@ const iconPaths: Record<IconName, ReactNode> = {
   minimize: <path d="M5 12h14" />,
   maximize: <rect x="5" y="5" width="14" height="14" rx="1" />,
   check: <path d="m5 12 4 4L19 6" />,
-  layout: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M10 4v16M3 9.5h7" /></>
+  layout: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M10 4v16M3 9.5h7" /></>,
+  chart: <><path d="M4 20h16" /><path d="M7 20v-5" /><path d="M12 20V9" /><path d="M17 20V4" /></>
 }
 
 function Icon({ name, size = 16, className = '' }: { name: IconName; size?: number; className?: string }) {
@@ -154,8 +161,37 @@ function Modal({ title, onClose, children, width = 560 }: { title: string; onClo
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="modal-card" style={{ width }} role="dialog" aria-modal="true" aria-label={title}><header className="modal-head"><h2>{title}</h2><button className="icon-button" type="button" onClick={onClose} title="关闭"><Icon name="close" /></button></header>{children}</section></div>
 }
 
-function SettingsDialog({ onClose, keyStatus, onKeyStatusChange, notify }: { onClose: () => void; keyStatus: FofaKeyStatus; onKeyStatusChange: (status: FofaKeyStatus) => void; notify: (text: string, tone?: ToastMessage['tone']) => void }) {
+const PROVIDER_LABELS: Record<FofaProvider, string> = { official: 'FOFA 官方 API', relay: '第三方中转' }
+
+function quotaLabel(quota: FofaQuota, provider: FofaProvider): string {
+  if (provider === 'official') {
+    if (quota.remainFreePoint == null && quota.fofaPoint == null) return 'F点 --'
+    return `免费F点 ${quota.remainFreePoint ?? '--'} / F点 ${quota.fofaPoint ?? '--'}`
+  }
+  return `今日 ${quota.newTodayRemaining ?? '--'} / 总 ${quota.newTotalRemaining ?? '--'}`
+}
+
+function ValidationCard({ validation }: { validation: FofaKeyValidation }) {
+  if (!validation.valid) {
+    return <div className="validation-card error"><strong>验证失败</strong><p>{validation.message || '请检查 Key 是否正确或是否过期。'}</p></div>
+  }
+  if (validation.provider === 'official') {
+    return <div className="validation-card ok"><strong>验证通过 · {validation.username || '官方账号'}</strong><div className="quota-grid">
+      <span>免费F点 <b>{validation.remainFreePoint ?? '--'}</b></span>
+      <span>F点 <b>{validation.fofaPoint ?? '--'}</b></span>
+      <span>会员 <b>{validation.isvip ? `VIP${validation.vipLevel ?? ''}` : '普通'}</b></span>
+      <span>API 查询 <b>{validation.remainApiQuery === -1 ? '不限' : validation.remainApiQuery ?? '--'}</b></span>
+      <span>返回条数 <b>{validation.remainApiData === -1 ? '不限' : validation.remainApiData ?? '--'}</b></span>
+      <span>到期 <b>{validation.expiration && validation.expiration !== '-' ? validation.expiration : '--'}</b></span>
+    </div></div>
+  }
+  return <div className="validation-card ok"><strong>验证通过</strong><div className="quota-grid"><span>今日剩余 <b>{validation.todayRemaining ?? '--'}</b></span><span>总剩余 <b>{validation.totalRemaining ?? '--'}</b></span><span>到期时间 <b>{validation.expireTime || '--'}</b></span></div></div>
+}
+
+function ProviderCredentials({ provider, status, onStatusChange, notify }: { provider: FofaProvider; status: FofaProviderStatus; onStatusChange: (status: FofaDataSourceStatus) => void; notify: (text: string, tone?: ToastMessage['tone']) => void }) {
+  const isOfficial = provider === 'official'
   const [keyDraft, setKeyDraft] = useState('')
+  const [emailDraft, setEmailDraft] = useState('')
   const [validation, setValidation] = useState<FofaKeyValidation | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -163,11 +199,13 @@ function SettingsDialog({ onClose, keyStatus, onKeyStatusChange, notify }: { onC
     if (!keyDraft.trim()) { notify('请先输入 32 位 API Key', 'warn'); return }
     setBusy(true); setValidation(null)
     try {
-      const status = await window.electronAPI.saveFofaKey(keyDraft)
-      onKeyStatusChange(status)
-      const result = await window.electronAPI.validateFofaKey()
+      const next = isOfficial
+        ? await window.electronAPI.saveFofaKey(provider, keyDraft, emailDraft.trim() || undefined)
+        : await window.electronAPI.saveFofaKey(provider, keyDraft)
+      onStatusChange(next)
+      const result = await window.electronAPI.validateFofaKey(provider)
       setValidation(result)
-      if (result.valid) { setKeyDraft(''); notify('API Key 已保存并通过验证', 'ok') }
+      if (result.valid) { setKeyDraft(''); setEmailDraft(''); notify(`${PROVIDER_LABELS[provider]} Key 已保存并通过验证`, 'ok') }
       else notify(result.message || 'Key 验证失败', 'error')
     } catch (error) { notify(error instanceof Error ? error.message : 'Key 保存失败', 'error') }
     finally { setBusy(false) }
@@ -176,7 +214,7 @@ function SettingsDialog({ onClose, keyStatus, onKeyStatusChange, notify }: { onC
   async function validateExisting() {
     setBusy(true); setValidation(null)
     try {
-      const result = await window.electronAPI.validateFofaKey()
+      const result = await window.electronAPI.validateFofaKey(provider)
       setValidation(result)
       notify(result.valid ? 'Key 有效' : result.message || 'Key 验证失败', result.valid ? 'ok' : 'error')
     } catch (error) { notify(error instanceof Error ? error.message : '验证失败', 'error') }
@@ -187,26 +225,104 @@ function SettingsDialog({ onClose, keyStatus, onKeyStatusChange, notify }: { onC
     if (!window.confirm('确认删除本机保存的 API Key？')) return
     setBusy(true)
     try {
-      await window.electronAPI.clearFofaKey()
-      onKeyStatusChange(await window.electronAPI.getFofaKeyStatus())
+      onStatusChange(await window.electronAPI.clearFofaKey(provider))
       setValidation(null)
       notify('已删除本地 API Key', 'ok')
     } finally { setBusy(false) }
   }
 
-  return <Modal title="数据源与安全设置" onClose={onClose} width={620}><div className="modal-body settings-body">
-    <div className={`source-card ${keyStatus.configured ? 'is-ready' : ''}`}><div className="source-icon"><Icon name="radar" size={22} /></div><div><strong>fafaapi.info 第三方中转</strong><p>业务请求只在 Electron 主进程发出，Key 不会进入渲染层日志或构建产物。</p></div><span className="status-pill">{keyStatus.configured ? '已配置' : '未配置'}</span></div>
-    {keyStatus.configured && <div className="key-summary"><span><Icon name="server" /> 来源：{keyStatus.source === 'env' ? '环境变量 FAFA_API_KEY' : '本机加密存储'}</span><span><Icon name={keyStatus.encrypted ? 'check' : 'settings'} /> {keyStatus.encrypted ? '系统级加密' : keyStatus.source === 'env' ? '环境变量' : '仅文件权限保护'}</span></div>}
-    <label className="field-label" htmlFor="api-key">API Key</label>
-    <div className="key-input-row"><input id="api-key" type="password" value={keyDraft} onChange={(event) => setKeyDraft(event.target.value)} placeholder={keyStatus.configured ? '输入新 Key 可覆盖当前配置' : '粘贴 32 位十六进制 API Key'} spellCheck={false} autoComplete="off" /><button className="button primary" type="button" disabled={busy} onClick={() => void saveAndValidate()}>{busy ? '处理中…' : '保存并验证'}</button></div>
-    <div className="settings-actions"><button className="button ghost" type="button" disabled={busy || !keyStatus.configured} onClick={() => void validateExisting()}><Icon name="refresh" /> 验证当前 Key</button><button className="button ghost danger" type="button" disabled={busy || !keyStatus.configured || keyStatus.source === 'env'} onClick={() => void clearKey()}><Icon name="trash" /> 删除本地 Key</button><button className="button ghost" type="button" onClick={() => void window.electronAPI.openExternal('https://fafaapi.info/fofa.html')}><Icon name="external" /> 获取 Key</button></div>
-    {validation && <div className={`validation-card ${validation.valid ? 'ok' : 'error'}`}><strong>{validation.valid ? '验证通过' : '验证失败'}</strong>{validation.valid ? <div className="quota-grid"><span>今日剩余 <b>{validation.todayRemaining ?? '--'}</b></span><span>总剩余 <b>{validation.totalRemaining ?? '--'}</b></span><span>到期时间 <b>{validation.expireTime || '--'}</b></span></div> : <p>{validation.message || '请检查 Key 是否正确或是否过期。'}</p>}</div>}
-    <p className="security-note">第三方接口不稳定且每次搜索/统计都可能消耗次数。应用会串行请求，并在两次业务请求间保留约 3 秒间隔。</p>
+  const envName = isOfficial ? 'FOFA_API_KEY' : 'FAFA_API_KEY'
+
+  return <section className="provider-config">
+    <div className="provider-config-head"><strong>{isOfficial ? '官方 API 凭据（fofa.info）' : '中转 API 凭据（fafaapi.info）'}</strong>{status.configured && <span className="status-pill">已配置</span>}</div>
+    {status.configured && <div className="key-summary"><span><Icon name="server" /> 来源：{status.source === 'env' ? `环境变量 ${envName}` : '本机加密存储'}</span><span><Icon name={status.encrypted ? 'check' : 'settings'} /> {status.encrypted ? '系统级加密' : status.source === 'env' ? '环境变量' : '仅文件权限保护'}</span>{isOfficial && status.emailConfigured && <span><Icon name="check" /> 已配置邮箱</span>}</div>}
+    <label className="field-label" htmlFor={`api-key-${provider}`}>API Key</label>
+    <div className="key-input-row"><input id={`api-key-${provider}`} type="password" value={keyDraft} onChange={(event) => setKeyDraft(event.target.value)} placeholder={status.configured ? '输入新 Key 可覆盖当前配置' : '粘贴 32 位十六进制 API Key'} spellCheck={false} autoComplete="off" /><button className="button primary" type="button" disabled={busy} onClick={() => void saveAndValidate()}>{busy ? '处理中…' : '保存并验证'}</button></div>
+    {isOfficial && <>
+      <label className="field-label" htmlFor={`api-email-${provider}`}>账号邮箱（可选，官方接口同时支持仅 Key 认证）</label>
+      <div className="key-input-row"><input id={`api-email-${provider}`} type="text" value={emailDraft} onChange={(event) => setEmailDraft(event.target.value)} placeholder="user@example.com（留空则仅用 Key 认证）" spellCheck={false} autoComplete="off" /></div>
+    </>}
+    <div className="settings-actions">
+      <button className="button ghost" type="button" disabled={busy || !status.configured} onClick={() => void validateExisting()}><Icon name="refresh" /> 验证当前 Key</button>
+      <button className="button ghost danger" type="button" disabled={busy || !status.configured || status.source === 'env'} onClick={() => void clearKey()}><Icon name="trash" /> 删除本地 Key</button>
+      <button className="button ghost" type="button" onClick={() => void window.electronAPI.openExternal(isOfficial ? 'https://fofa.info/userInfo' : 'https://fafaapi.info/fofa.html')}><Icon name="external" /> 获取 Key</button>
+    </div>
+    {validation && <ValidationCard validation={validation} />}
+    <p className="security-note">{isOfficial ? '官方接口按 F 点计费，搜索响应会自动附带剩余额度。业务请求只在主进程发出，Key 不进入渲染层。' : '第三方接口不稳定且每次搜索/统计都可能消耗次数。应用会串行请求，并在两次业务请求间保留约 3 秒间隔。'}</p>
+  </section>
+}
+
+function SettingsDialog({ onClose, status, onStatusChange, notify }: { onClose: () => void; status: FofaDataSourceStatus; onStatusChange: (status: FofaDataSourceStatus) => void; notify: (text: string, tone?: ToastMessage['tone']) => void }) {
+  const [switching, setSwitching] = useState(false)
+
+  async function activate(provider: FofaProvider) {
+    if (status.active === provider || switching) return
+    setSwitching(true)
+    try {
+      onStatusChange(await window.electronAPI.setActiveFofaProvider(provider))
+      notify(`已切换到${PROVIDER_LABELS[provider]}，后续搜索将使用该数据源`, 'ok')
+    } catch (error) { notify(error instanceof Error ? error.message : '切换数据源失败', 'error') }
+    finally { setSwitching(false) }
+  }
+
+  const providerCard = (provider: FofaProvider, name: string, description: string) => {
+    const providerState = status[provider]
+    return <button className={`source-card selectable ${status.active === provider ? 'is-active' : ''} ${providerState.configured ? 'is-ready' : ''}`} type="button" disabled={switching} onClick={() => void activate(provider)} aria-pressed={status.active === provider}>
+      <div className="source-icon"><Icon name={provider === 'official' ? 'radar' : 'server'} size={22} /></div>
+      <div><strong>{name}</strong><p>{description}</p></div>
+      <span className="status-pill">{status.active === provider ? '使用中' : providerState.configured ? '已配置' : '未配置'}</span>
+    </button>
+  }
+
+  return <Modal title="数据源与安全设置" onClose={onClose} width={680}><div className="modal-body settings-body">
+    <label className="field-label">数据源（点击切换，两者可同时配置）</label>
+    <div className="provider-picker">
+      {providerCard('official', 'FOFA 官方 API', 'fofa.info 官方接口，数据最全，仅 Key 即可认证，按 F 点计费。')}
+      {providerCard('relay', 'fafaapi.info 第三方中转', '中转接口按次计费，支持聚合统计与 AI 语法生成。')}
+    </div>
+    <ProviderCredentials provider="official" status={status.official} onStatusChange={onStatusChange} notify={notify} />
+    <ProviderCredentials provider="relay" status={status.relay} onStatusChange={onStatusChange} notify={notify} />
   </div></Modal>
 }
 
-function FingerprintPanel({ items, activeQuery, onUse, onRun, onEdit, onDelete, onToggleFavorite, onCreate, onImport, onExport }: {
+function WorkspaceSwitch({ scope, onScopeChange, counts }: { scope: WorkspaceScope; onScopeChange: (scope: WorkspaceScope) => void; counts: Record<WorkspaceScope, number> }) {
+  return <div className="side-workspace">
+    <div className="seg-group side-workspace-seg">
+      <button className={scope === 'personal' ? 'is-active' : ''} type="button" onClick={() => onScopeChange('personal')} title="个人研究内容，不参与分享">私人 {counts.personal}</button>
+      <button className={scope === 'shared' ? 'is-active' : ''} type="button" onClick={() => onScopeChange('shared')} title="开放共享内容，多人协作时可互相访问">开放 {counts.shared}</button>
+    </div>
+  </div>
+}
+
+function FolderSection({ folder, count, collapsed, onToggle, onRename, onDelete }: {
+  folder: string
+  count: number
+  collapsed: boolean
+  onToggle: () => void
+  onRename?: () => void
+  onDelete?: () => void
+}) {
+  return <header className="folder-head" onClick={onToggle}>
+    <button className={`tree-expander ${collapsed ? '' : 'is-open'}`} type="button" onClick={(event) => { event.stopPropagation(); onToggle() }} aria-label={collapsed ? '展开文件夹' : '折叠文件夹'}><Icon name="chevron" size={12} /></button>
+    <Icon name="folder" size={13} />
+    <strong className="folder-name">{folder || '未归档'}</strong>
+    <span className="folder-count">{count}</span>
+    {folder && (onRename || onDelete) && <span className="folder-actions" onClick={(event) => event.stopPropagation()}>
+      {onRename && <button type="button" title="重命名文件夹" onClick={onRename}><Icon name="edit" size={12} /></button>}
+      {onDelete && <button type="button" title="删除文件夹（内容移入未归档）" onClick={onDelete}><Icon name="trash" size={12} /></button>}
+    </span>}
+  </header>
+}
+
+function FingerprintPanel({ items, scope, scopeCounts, collapsedFolders, onScopeChange, onToggleFolder, onRenameFolder, onDeleteFolder, activeQuery, onUse, onRun, onEdit, onDelete, onToggleFavorite, onCreate, onImport, onExport }: {
   items: Fingerprint[]
+  scope: WorkspaceScope
+  scopeCounts: Record<WorkspaceScope, number>
+  collapsedFolders: Set<string>
+  onScopeChange: (scope: WorkspaceScope) => void
+  onToggleFolder: (key: string) => void
+  onRenameFolder: (from: string, to: string) => void
+  onDeleteFolder: (folder: string) => void
   activeQuery: string
   onUse: (item: Fingerprint) => void
   onRun: (item: Fingerprint) => void
@@ -219,28 +335,54 @@ function FingerprintPanel({ items, activeQuery, onUse, onRun, onEdit, onDelete, 
 }) {
   const [filter, setFilter] = useState('')
   const importRef = useRef<HTMLInputElement>(null)
-  const visible = useMemo(() => {
+  const groups = useMemo(() => {
     const keyword = filter.trim().toLowerCase()
-    const sorted = [...items].sort((left, right) => Number(right.favorite) - Number(left.favorite))
-    if (!keyword) return sorted
-    return sorted.filter((item) => [item.name, item.query, item.product, item.category, item.country, item.server, item.title, item.folder, item.note].join(' ').toLowerCase().includes(keyword))
+    const sorted = [...items].sort((left, right) => Number(right.favorite) - Number(left.favorite) || right.updatedAt.localeCompare(left.updatedAt))
+    const matched = keyword
+      ? sorted.filter((item) => [item.name, item.query, item.product, item.category, item.country, item.server, item.title, item.folder, item.note, item.vendor, item.model].join(' ').toLowerCase().includes(keyword))
+      : sorted
+    return groupByFolder(matched)
   }, [filter, items])
 
   return <div className="side-panel">
-    <div className="side-toolbar"><div className="side-search"><Icon name="search" size={14} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索指纹、语句、厂商…" /></div><button className="icon-button accent" type="button" onClick={onCreate} title="把当前查询存入指纹库"><Icon name="plus" /></button></div>
-    <div className="side-summary"><span>{visible.length} 条指纹</span><span>当前语句 {activeQuery ? `${activeQuery.length} 字符` : '为空'}</span></div>
-    <div className="fingerprint-list">{visible.length === 0 ? <div className="panel-empty"><Icon name="library" size={28} /><strong>还没有指纹</strong><p>在查询编辑器里输入语句，然后点击右上角 + 保存。</p></div> : visible.map((item) => <article className="fingerprint-card" key={item.id}>
-      <div className="fingerprint-top"><button className={`star-button ${item.favorite ? 'is-on' : ''}`} type="button" onClick={() => onToggleFavorite(item)} title="收藏"><Icon name="star" size={14} /></button><button className="fingerprint-name" type="button" onClick={() => onUse(item)}>{item.name || '未命名指纹'}</button><span className="fingerprint-folder">{item.folder || '未归档'}</span></div>
-      <code className="fingerprint-query" title={item.query}>{item.query}</code>
-      <div className="fingerprint-tags">{item.product && <span>{item.product}</span>}{item.server && <span>{item.server}</span>}{item.country && <span>{item.country}</span>}{!item.product && !item.server && !item.country && <span>通用查询</span>}</div>
-      <div className="fingerprint-actions"><button type="button" onClick={() => onRun(item)}><Icon name="play" size={13} /> 搜索</button><button type="button" onClick={() => onUse(item)}><Icon name="edit" size={13} /> 编辑</button><button type="button" onClick={() => void navigator.clipboard.writeText(item.query)}><Icon name="copy" size={13} /> 复制</button><button type="button" onClick={() => onDelete(item)} title="删除"><Icon name="trash" size={13} /></button></div>
-    </article>)}</div>
+    <div className="side-toolbar"><div className="side-search"><Icon name="search" size={14} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索指纹、语句、厂商…" /></div><button className="icon-button accent" type="button" onClick={onCreate} title="把当前查询存入指纹库（默认私人工作区）"><Icon name="plus" /></button></div>
+    <WorkspaceSwitch scope={scope} onScopeChange={onScopeChange} counts={scopeCounts} />
+    <div className="side-summary"><span>{items.length} 条指纹 · {groups.filter((group) => group.folder).length} 个文件夹</span><span>当前语句 {activeQuery ? `${activeQuery.length} 字符` : '为空'}</span></div>
+    <div className="fingerprint-list">
+      {items.length === 0 ? <div className="panel-empty"><Icon name="library" size={28} /><strong>{scope === 'shared' ? '开放工作区还没有指纹' : '还没有指纹'}</strong><p>{scope === 'shared' ? '把成熟的指纹设为开放工作区，多人协同时即可共享。' : '在查询编辑器里输入语句，然后点击右上角 + 保存。'}</p></div>
+        : groups.map((group) => {
+          const key = `fp:${group.folder}`
+          const isCollapsed = collapsedFolders.has(key)
+          return <section className="folder-section" key={group.folder}>
+            <FolderSection folder={group.folder} count={group.items.length} collapsed={isCollapsed} onToggle={() => onToggleFolder(key)}
+              onRename={group.folder ? () => {
+                const next = window.prompt(`重命名文件夹「${group.folder}」`, group.folder)
+                const name = next === null ? '' : next.trim()
+                if (name && name !== group.folder) onRenameFolder(group.folder, name)
+              } : undefined}
+              onDelete={group.folder ? () => onDeleteFolder(group.folder) : undefined} />
+            {!isCollapsed && group.items.map((item) => <article className="fingerprint-card" key={item.id}>
+              <div className="fingerprint-top"><button className={`star-button ${item.favorite ? 'is-on' : ''}`} type="button" onClick={() => onToggleFavorite(item)} title="收藏"><Icon name="star" size={14} /></button><button className="fingerprint-name" type="button" onClick={() => onUse(item)}>{item.name || '未命名指纹'}</button>{item.scope === 'shared' && <span className="fingerprint-folder" title="开放工作区">开放</span>}</div>
+              <code className="fingerprint-query" title={item.query}>{item.query}</code>
+              <div className="fingerprint-tags">{item.product && <span>{item.product}</span>}{item.server && <span>{item.server}</span>}{item.country && <span>{item.country}</span>}{!item.product && !item.server && !item.country && <span>通用查询</span>}</div>
+              <div className="fingerprint-actions"><button type="button" onClick={() => onRun(item)}><Icon name="play" size={13} /> 搜索</button><button type="button" onClick={() => onUse(item)}><Icon name="edit" size={13} /> 编辑</button><button type="button" onClick={() => void navigator.clipboard.writeText(item.query)}><Icon name="copy" size={13} /> 复制</button><button type="button" onClick={() => onDelete(item)} title="删除"><Icon name="trash" size={13} /></button></div>
+            </article>)}
+          </section>
+        })}
+    </div>
     <div className="side-footer"><button type="button" onClick={onExport}><Icon name="download" /> 导出</button><button type="button" onClick={() => importRef.current?.click()}><Icon name="upload" /> 导入</button><input ref={importRef} type="file" accept="application/json,.json" hidden onChange={onImport} /></div>
   </div>
 }
 
-function KnowledgePanel({ items, onUse, onEdit, onDelete, onCreate, onImport, onExport }: {
+function KnowledgePanel({ items, scope, scopeCounts, collapsedFolders, onScopeChange, onToggleFolder, onRenameFolder, onDeleteFolder, onUse, onEdit, onDelete, onCreate, onImport, onExport }: {
   items: KnowledgeEntry[]
+  scope: WorkspaceScope
+  scopeCounts: Record<WorkspaceScope, number>
+  collapsedFolders: Set<string>
+  onScopeChange: (scope: WorkspaceScope) => void
+  onToggleFolder: (key: string) => void
+  onRenameFolder: (from: string, to: string) => void
+  onDeleteFolder: (folder: string) => void
   onUse: (item: KnowledgeEntry) => void
   onEdit: (item: KnowledgeEntry) => void
   onDelete: (item: KnowledgeEntry) => void
@@ -250,21 +392,42 @@ function KnowledgePanel({ items, onUse, onEdit, onDelete, onCreate, onImport, on
 }) {
   const [filter, setFilter] = useState('')
   const importRef = useRef<HTMLInputElement>(null)
-  const visible = useMemo(() => {
+  const groups = useMemo(() => {
     const keyword = filter.trim().toLowerCase()
-    return [...items].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).filter((item) => !keyword || [item.parent, item.name, item.server, item.title, item.note, item.folder].join(' ').toLowerCase().includes(keyword))
+    const sorted = [...items].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    const matched = keyword
+      ? sorted.filter((item) => [item.parent, item.name, item.server, item.title, item.note, item.folder].join(' ').toLowerCase().includes(keyword))
+      : sorted
+    return groupByFolder(matched)
   }, [filter, items])
 
   return <div className="side-panel">
-    <div className="side-toolbar"><div className="side-search"><Icon name="search" size={14} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索厂商、Server、Title…" /></div><button className="icon-button accent" type="button" onClick={onCreate} title="新建知识库记录"><Icon name="plus" /></button></div>
-    <div className="side-summary"><span>{visible.length} 条知识</span><span>厂商贴牌与资产线索</span></div>
-    <div className="knowledge-list">{visible.length === 0 ? <div className="panel-empty"><Icon name="knowledge" size={28} /><strong>知识库为空</strong><p>记录母厂、贴牌名称、Server 和 Title，后续可一键转为查询。</p></div> : visible.map((item) => <article className="knowledge-card" key={item.id}>
-      <div className="knowledge-head"><span className="knowledge-dot" /><button className="fingerprint-name" type="button" onClick={() => onEdit(item)}>{item.name || '未命名记录'}</button><span>{item.folder || '默认'}</span></div>
-      {item.parent && <p className="knowledge-parent">母厂 / 关系：{item.parent}</p>}
-      <div className="knowledge-meta">{item.server && <span><Icon name="server" size={12} /> {item.server}</span>}{item.title && <span><Icon name="terminal" size={12} /> {item.title}</span>}</div>
-      {item.note && <p className="knowledge-note">{item.note}</p>}
-      <div className="fingerprint-actions"><button type="button" onClick={() => onUse(item)}><Icon name="search" size={13} /> 转为查询</button><button type="button" onClick={() => onEdit(item)}><Icon name="edit" size={13} /> 编辑</button><button type="button" onClick={() => onDelete(item)} title="删除"><Icon name="trash" size={13} /></button></div>
-    </article>)}</div>
+    <div className="side-toolbar"><div className="side-search"><Icon name="search" size={14} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索厂商、Server、Title…" /></div><button className="icon-button accent" type="button" onClick={onCreate} title={`新建知识库记录（存入${scope === 'shared' ? '开放' : '私人'}工作区）`}><Icon name="plus" /></button></div>
+    <WorkspaceSwitch scope={scope} onScopeChange={onScopeChange} counts={scopeCounts} />
+    <div className="side-summary"><span>{items.length} 条知识 · {groups.filter((group) => group.folder).length} 个文件夹</span><span>厂商贴牌与资产线索</span></div>
+    <div className="knowledge-list">
+      {items.length === 0 ? <div className="panel-empty"><Icon name="knowledge" size={28} /><strong>{scope === 'shared' ? '开放工作区还没有知识' : '知识库为空'}</strong><p>{scope === 'shared' ? '把可公开的厂商知识设为开放工作区，多人协同时即可共享。' : '记录母厂、贴牌名称、Server 和 Title，后续可一键转为查询。'}</p></div>
+        : groups.map((group) => {
+          const key = `kn:${group.folder}`
+          const isCollapsed = collapsedFolders.has(key)
+          return <section className="folder-section" key={group.folder}>
+            <FolderSection folder={group.folder} count={group.items.length} collapsed={isCollapsed} onToggle={() => onToggleFolder(key)}
+              onRename={group.folder ? () => {
+                const next = window.prompt(`重命名文件夹「${group.folder}」`, group.folder)
+                const name = next === null ? '' : next.trim()
+                if (name && name !== group.folder) onRenameFolder(group.folder, name)
+              } : undefined}
+              onDelete={group.folder ? () => onDeleteFolder(group.folder) : undefined} />
+            {!isCollapsed && group.items.map((item) => <article className="knowledge-card" key={item.id}>
+              <div className="knowledge-head"><span className="knowledge-dot" /><button className="fingerprint-name" type="button" onClick={() => onEdit(item)}>{item.name || '未命名记录'}</button></div>
+              {item.parent && <p className="knowledge-parent">母厂 / 关系：{item.parent}</p>}
+              <div className="knowledge-meta">{item.server && <span><Icon name="server" size={12} /> {item.server}</span>}{item.title && <span><Icon name="terminal" size={12} /> {item.title}</span>}</div>
+              {item.note && <p className="knowledge-note">{item.note}</p>}
+              <div className="fingerprint-actions"><button type="button" onClick={() => onUse(item)}><Icon name="search" size={13} /> 转为查询</button><button type="button" onClick={() => onEdit(item)}><Icon name="edit" size={13} /> 编辑</button><button type="button" onClick={() => onDelete(item)} title="删除"><Icon name="trash" size={13} /></button></div>
+            </article>)}
+          </section>
+        })}
+    </div>
     <div className="side-footer"><button type="button" onClick={onExport}><Icon name="download" /> 导出</button><button type="button" onClick={() => importRef.current?.click()}><Icon name="upload" /> 导入</button><input ref={importRef} type="file" accept="application/json,.json" hidden onChange={onImport} /></div>
   </div>
 }
@@ -355,7 +518,11 @@ function LayoutMenu({ layout, onChange, onReset, onClose }: {
 
 function App() {
   const [info, setInfo] = useState<AppInfo | null>(null)
-  const [keyStatus, setKeyStatus] = useState<FofaKeyStatus>({ configured: false, encrypted: false, source: 'none' })
+  const [dataSource, setDataSource] = useState<FofaDataSourceStatus>({
+    active: 'relay',
+    relay: { configured: false, encrypted: false, source: 'none' },
+    official: { configured: false, encrypted: false, source: 'none' }
+  })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [leftTab, setLeftTab] = useState<'fingerprints' | 'knowledge'>('fingerprints')
   const [leftWidth, setLeftWidth] = useState(306)
@@ -364,8 +531,11 @@ function App() {
   const [collapsedTabs, setCollapsedTabs] = useState<Set<string>>(() => new Set())
   const [editorHeight, setEditorHeight] = useState(232)
   const [presetManagerOpen, setPresetManagerOpen] = useState(false)
+  const [statsOpen, setStatsOpen] = useState(false)
   const [fingerprints, setFingerprints] = useState<Fingerprint[]>(() => loadFingerprints())
   const [knowledge, setKnowledge] = useState<KnowledgeEntry[]>(() => loadKnowledge())
+  const [sideScope, setSideScope] = useState<WorkspaceScope>('personal')
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set())
   const [fingerprintDraft, setFingerprintDraft] = useState<Fingerprint | null>(null)
   const [knowledgeDraft, setKnowledgeDraft] = useState<KnowledgeEntry | null>(null)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
@@ -375,6 +545,8 @@ function App() {
   const [activeSessionId, setActiveSessionId] = useState(() => sessions[0].id)
   const [queryDraft, setQueryDraft] = useState(initialQuery)
   const activeSession = sessions.find((session) => session.id === activeSessionId) || sessions[0]
+  const activeProvider = dataSource.active
+  const activeSource = dataSource[activeProvider]
 
   function notify(text: string, tone: ToastMessage['tone'] = 'ok') {
     const toast = { id: makeId(), text, tone }
@@ -390,11 +562,11 @@ function App() {
     let cancelled = false
     async function load() {
       try {
-        const [appInfo, status] = await Promise.all([window.electronAPI.getAppInfo(), window.electronAPI.getFofaKeyStatus()])
+        const [appInfo, status] = await Promise.all([window.electronAPI.getAppInfo(), window.electronAPI.getFofaStatus()])
         if (cancelled) return
         setInfo(appInfo)
-        setKeyStatus(status)
-        if (!status.configured) setSettingsOpen(true)
+        setDataSource(status)
+        if (!status[status.active].configured) setSettingsOpen(true)
       } catch (error) {
         notify(error instanceof Error ? error.message : '初始化失败', 'error')
       }
@@ -414,6 +586,16 @@ function App() {
     return recordsFromResponse(response.finalResults || response.data || [])
   }, [activeSession.data])
   const groups = useMemo(() => groupAssets(activeRecords), [activeRecords])
+  const scopedFingerprints = useMemo(() => fingerprints.filter((item) => item.scope === sideScope), [fingerprints, sideScope])
+  const scopedKnowledge = useMemo(() => knowledge.filter((item) => item.scope === sideScope), [knowledge, sideScope])
+  const fingerprintScopeCounts = useMemo(() => ({
+    personal: fingerprints.filter((item) => item.scope === 'personal').length,
+    shared: fingerprints.filter((item) => item.scope === 'shared').length
+  }), [fingerprints])
+  const knowledgeScopeCounts = useMemo(() => ({
+    personal: knowledge.filter((item) => item.scope === 'personal').length,
+    shared: knowledge.filter((item) => item.scope === 'shared').length
+  }), [knowledge])
   const total = activeSession.data?.total ?? activeSession.data?.size ?? 0
   const browserTabs = useMemo(() => sessions.filter((session) => session.kind === 'browser'), [sessions])
   const activePath = useMemo(() => {
@@ -429,7 +611,7 @@ function App() {
   }, [activeSession, sessions])
 
   function createSession(parentId?: string, initialQuery = queryDraft) {
-    const next: SearchSession = { kind: 'search', id: makeId(), parentId, label: '新搜索', query: initialQuery, page: 1, size: 50, status: 'idle' }
+    const next: SearchSession = { kind: 'search', id: makeId(), parentId, folder: activeSession.folder, label: '新搜索', query: initialQuery, page: 1, size: 50, status: 'idle' }
     setSessions((current) => [...current, next])
     setActiveSessionId(next.id)
     setQueryDraft(initialQuery)
@@ -441,7 +623,7 @@ function App() {
     if (url && url !== 'about:blank') {
       try { label = new URL(url).hostname || '新页面' } catch { label = url.slice(0, 28) }
     }
-    const next: SearchSession = { kind: 'browser', id: makeId(), parentId, label, query: '', page: 1, size: 50, status: 'idle', url }
+    const next: SearchSession = { kind: 'browser', id: makeId(), parentId, folder: activeSession.folder, label, query: '', page: 1, size: 50, status: 'idle', url }
     setSessions((current) => [...current, next])
     setActiveSessionId(next.id)
     setCollapsedTabs((current) => {
@@ -509,6 +691,50 @@ function App() {
     notify(parentId ? '已调整父子标签关系' : '已移动为根标签', 'ok')
   }
 
+  function toggleFolderCollapse(key: string) {
+    setCollapsedFolders((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  function renameFolderIn(collection: 'fingerprints' | 'knowledge', from: string, to: string) {
+    const apply = <T extends { folder: string; scope: WorkspaceScope; updatedAt: string }>(items: T[]): T[] =>
+      items.map((item) => item.scope === sideScope && (item.folder || '') === from ? { ...item, folder: to, updatedAt: new Date().toISOString() } : item)
+    if (collection === 'fingerprints') setFingerprints((current) => apply(current))
+    else setKnowledge((current) => apply(current))
+    notify(`文件夹「${from}」已重命名为「${to}」`, 'ok')
+  }
+
+  function deleteFolderIn(collection: 'fingerprints' | 'knowledge', folder: string) {
+    const noun = collection === 'fingerprints' ? '指纹' : '知识'
+    const count = (collection === 'fingerprints' ? scopedFingerprints : scopedKnowledge).filter((item) => (item.folder || '') === folder).length
+    if (!window.confirm(`删除文件夹「${folder}」？其中 ${count} 条${noun}将移入未归档。`)) return
+    const apply = <T extends { folder: string; scope: WorkspaceScope; updatedAt: string }>(items: T[]): T[] =>
+      items.map((item) => item.scope === sideScope && (item.folder || '') === folder ? { ...item, folder: '', updatedAt: new Date().toISOString() } : item)
+    if (collection === 'fingerprints') setFingerprints((current) => apply(current))
+    else setKnowledge((current) => apply(current))
+    notify(`文件夹「${folder}」已删除，内容移入未归档`, 'ok')
+  }
+
+  function moveTabToFolder(tabId: string, folder: string) {
+    setSessions((current) => current.map((session) => session.id === tabId ? { ...session, folder, parentId: undefined } : session))
+    notify(folder ? `标签已移入文件夹「${folder}」` : '标签已移入未分组', 'ok')
+  }
+
+  function renameTabFolder(from: string, to: string) {
+    setSessions((current) => current.map((session) => (session.folder || '') === from ? { ...session, folder: to } : session))
+    notify(`标签文件夹「${from}」已重命名为「${to}」`, 'ok')
+  }
+
+  function deleteTabFolder(folder: string) {
+    if (!window.confirm(`删除标签文件夹「${folder}」？其中标签将移入未分组。`)) return
+    setSessions((current) => current.map((session) => (session.folder || '') === folder ? { ...session, folder: '' } : session))
+    notify('标签文件夹已删除', 'ok')
+  }
+
   function handleBrowserMeta(tabId: string, meta: BrowserMeta) {
     let label = meta.title
     if (!label || label === meta.url) {
@@ -527,7 +753,7 @@ function App() {
     const query = (overrideQuery ?? (targetSessionId === activeSession.id ? queryDraft : session.query)).trim()
     const page = overridePage ?? session.page
     if (!query) { notify('搜索语句不能为空', 'warn'); return }
-    if (!keyStatus.configured) { setSettingsOpen(true); notify('请先配置第三方 FOFA API Key', 'warn'); return }
+    if (!activeSource.configured) { setSettingsOpen(true); notify(`请先配置${PROVIDER_LABELS[activeProvider]}的 API Key`, 'warn'); return }
 
     saveLastQuery(query)
     updateSession(targetSessionId, { query, page, status: 'loading', error: undefined, label: productFromQuery(query) || query.slice(0, 24) || '新搜索' })
@@ -535,7 +761,12 @@ function App() {
 
     try {
       const data = await window.electronAPI.searchFofa({ query, page, size: session.size })
-      const nextQuota = { newTodayRemaining: data.newTodayRemaining, newTotalRemaining: data.newTotalRemaining }
+      const nextQuota: FofaQuota = {
+        newTodayRemaining: data.newTodayRemaining,
+        newTotalRemaining: data.newTotalRemaining,
+        remainFreePoint: data.remainFreePoint,
+        fofaPoint: data.fofaPoint
+      }
       setQuota(nextQuota)
       updateSession(targetSessionId, { query, page, status: 'success', data, error: undefined, quota: nextQuota, label: productFromQuery(query) || query.slice(0, 24) || '新搜索' })
       const count = data.finalResults?.length || data.data?.length || 0
@@ -611,7 +842,7 @@ function App() {
         if (typeof item.query !== 'string' || !item.query.trim() || existing.has(item.query)) continue
         const now = new Date().toISOString()
         existing.add(item.query)
-        incoming.push({ ...createFingerprint(item.query), ...item, id: typeof item.id === 'string' ? item.id : makeId(), name: typeof item.name === 'string' ? item.name : productFromQuery(item.query) || '导入指纹', favorite: Boolean(item.favorite), createdAt: typeof item.createdAt === 'string' ? item.createdAt : now, updatedAt: now })
+        incoming.push({ ...createFingerprint(item.query), ...item, id: typeof item.id === 'string' ? item.id : makeId(), name: typeof item.name === 'string' ? item.name : productFromQuery(item.query) || '导入指纹', folder: typeof item.folder === 'string' ? item.folder : '', scope: item.scope === 'shared' ? 'shared' : 'personal', favorite: Boolean(item.favorite), createdAt: typeof item.createdAt === 'string' ? item.createdAt : now, updatedAt: now })
       }
       setFingerprints((current) => [...incoming, ...current])
       notify(`已导入 ${incoming.length} 条指纹`, 'ok')
@@ -674,7 +905,7 @@ function App() {
         const key = `${item.parent || ''}|${item.name}|${item.server || ''}|${item.title || ''}`
         if (existing.has(key)) continue
         existing.add(key)
-        incoming.push({ id: makeId(), parent: typeof item.parent === 'string' ? item.parent : '', name: item.name, server: typeof item.server === 'string' ? item.server : '', title: typeof item.title === 'string' ? item.title : '', note: typeof item.note === 'string' ? item.note : '', folder: typeof item.folder === 'string' ? item.folder : '', updatedAt: new Date().toISOString() })
+        incoming.push({ id: makeId(), parent: typeof item.parent === 'string' ? item.parent : '', name: item.name, server: typeof item.server === 'string' ? item.server : '', title: typeof item.title === 'string' ? item.title : '', note: typeof item.note === 'string' ? item.note : '', folder: typeof item.folder === 'string' ? item.folder : '', scope: item.scope === 'shared' ? 'shared' : 'personal', updatedAt: new Date().toISOString() })
       }
       setKnowledge((current) => [...incoming, ...current])
       notify(`已导入 ${incoming.length} 条知识`, 'ok')
@@ -785,7 +1016,7 @@ function App() {
       <header className="titlebar" onPointerDown={startWindowDrag} onDoubleClick={(event) => { if ((event.target as HTMLElement).closest('button, input, select, a')) return; void window.electronAPI.toggleMaximizeWindow() }}>
         <div className="title-brand"><span className="brand-mark"><BrandMark /></span><div><strong>IoT Worktable</strong><small>FOFA 资产工作台</small></div></div>
         <div className="title-center"><span className="live-dot" /><span>{info ? `${platformLabels[info.platform] || info.platform} · Electron ${info.electron}` : '正在连接主进程…'}</span></div>
-        <div className="title-actions"><button className="titlebar-icon" type="button" onClick={() => setLayoutMenuOpen((open) => !open)} title="面板布局"><Icon name="layout" size={15} /></button><button className={`key-chip ${keyStatus.configured ? 'is-ready' : ''}`} type="button" onClick={() => setSettingsOpen(true)}><span className="status-dot" /> {keyStatus.configured ? '数据源已连接' : '配置数据源'}</button><button className="titlebar-icon" type="button" onClick={() => void window.electronAPI.minimizeWindow()} title="最小化"><Icon name="minimize" size={14} /></button><button className="titlebar-icon" type="button" onClick={() => void window.electronAPI.toggleMaximizeWindow()} title="最大化"><Icon name="maximize" size={13} /></button><button className="titlebar-icon close" type="button" onClick={() => void window.electronAPI.closeWindow()} title="关闭"><Icon name="close" size={14} /></button></div>
+        <div className="title-actions"><button className="titlebar-icon" type="button" onClick={() => setLayoutMenuOpen((open) => !open)} title="面板布局"><Icon name="layout" size={15} /></button><button className={`key-chip ${activeSource.configured ? 'is-ready' : ''}`} type="button" onClick={() => setSettingsOpen(true)}><span className="status-dot" /> {activeSource.configured ? `数据源已连接 · ${activeProvider === 'official' ? '官方' : '中转'}` : '配置数据源'}</button><button className="titlebar-icon" type="button" onClick={() => void window.electronAPI.minimizeWindow()} title="最小化"><Icon name="minimize" size={14} /></button><button className="titlebar-icon" type="button" onClick={() => void window.electronAPI.toggleMaximizeWindow()} title="最大化"><Icon name="maximize" size={13} /></button><button className="titlebar-icon close" type="button" onClick={() => void window.electronAPI.closeWindow()} title="关闭"><Icon name="close" size={14} /></button></div>
       </header>
 
       {layoutMenuOpen && <LayoutMenu layout={layout} onChange={setLayout} onReset={() => { setLayout(defaultLayout); notify('已恢复默认布局', 'ok') }} onClose={() => setLayoutMenuOpen(false)} />}
@@ -793,20 +1024,22 @@ function App() {
       <div className="workbench">
         {layout.rail && <nav className="activity-rail" aria-label="工作区">
           <button className="rail-logo" type="button" title="工作台"><Icon name="radar" size={21} /></button>
-          <button className={`rail-button ${leftTab === 'fingerprints' && layout.sidebar.visible ? 'is-active' : ''}`} type="button" onClick={() => toggleSidebarTab('fingerprints')} title="指纹库（再次点击隐藏侧栏）"><Icon name="library" size={19} /><span>指纹</span></button>
-          <button className={`rail-button ${leftTab === 'knowledge' && layout.sidebar.visible ? 'is-active' : ''}`} type="button" onClick={() => toggleSidebarTab('knowledge')} title="知识库（再次点击隐藏侧栏）"><Icon name="knowledge" size={19} /><span>知识</span></button>
+          <button className={`rail-button ${leftTab === 'fingerprints' && layout.sidebar.visible && !statsOpen ? 'is-active' : ''}`} type="button" onClick={() => { setStatsOpen(false); toggleSidebarTab('fingerprints') }} title="指纹库（再次点击隐藏侧栏）"><Icon name="library" size={19} /><span>指纹</span></button>
+          <button className={`rail-button ${leftTab === 'knowledge' && layout.sidebar.visible && !statsOpen ? 'is-active' : ''}`} type="button" onClick={() => { setStatsOpen(false); toggleSidebarTab('knowledge') }} title="知识库（再次点击隐藏侧栏）"><Icon name="knowledge" size={19} /><span>知识</span></button>
+          <button className={`rail-button ${statsOpen ? 'is-active' : ''}`} type="button" onClick={() => setStatsOpen((open) => !open)} title="使用统计（再次点击返回工作台）"><Icon name="chart" size={19} /><span>统计</span></button>
           <div className="rail-spacer" />
           <button className="rail-button" type="button" onClick={() => setSettingsOpen(true)} title="设置"><Icon name="settings" size={19} /><span>设置</span></button>
         </nav>}
 
         {layout.sidebar.visible && <aside className={`left-dock ${layout.sidebar.side === 'right' ? 'is-right' : ''}`} style={{ width: leftWidth }}>
           <div className="dock-tabs"><button className={leftTab === 'fingerprints' ? 'is-active' : ''} type="button" onClick={() => setLeftTab('fingerprints')}>指纹库 <small>{fingerprints.length}</small></button><button className={leftTab === 'knowledge' ? 'is-active' : ''} type="button" onClick={() => setLeftTab('knowledge')}>知识库 <small>{knowledge.length}</small></button></div>
-          {leftTab === 'fingerprints' ? <FingerprintPanel items={fingerprints} activeQuery={queryDraft} onUse={(item) => useFingerprint(item, false)} onRun={(item) => useFingerprint(item, true)} onEdit={(item) => setFingerprintDraft({ ...item })} onDelete={deleteFingerprint} onToggleFavorite={(item) => setFingerprints((current) => current.map((entry) => entry.id === item.id ? { ...entry, favorite: !entry.favorite, updatedAt: new Date().toISOString() } : entry))} onCreate={saveCurrentFingerprint} onImport={(event) => void importFingerprints(event)} onExport={exportFingerprints} /> : <KnowledgePanel items={knowledge} onUse={runKnowledgeQuery} onEdit={(item) => setKnowledgeDraft({ ...item })} onDelete={deleteKnowledge} onCreate={() => setKnowledgeDraft({ id: makeId(), parent: '', name: '', server: '', title: '', note: '', folder: '', updatedAt: new Date().toISOString() })} onImport={(event) => void importKnowledge(event)} onExport={exportKnowledge} />}
+          {leftTab === 'fingerprints' ? <FingerprintPanel items={scopedFingerprints} scope={sideScope} scopeCounts={fingerprintScopeCounts} collapsedFolders={collapsedFolders} onScopeChange={setSideScope} onToggleFolder={toggleFolderCollapse} onRenameFolder={(from, to) => renameFolderIn('fingerprints', from, to)} onDeleteFolder={(folder) => deleteFolderIn('fingerprints', folder)} activeQuery={queryDraft} onUse={(item) => useFingerprint(item, false)} onRun={(item) => useFingerprint(item, true)} onEdit={(item) => setFingerprintDraft({ ...item })} onDelete={deleteFingerprint} onToggleFavorite={(item) => setFingerprints((current) => current.map((entry) => entry.id === item.id ? { ...entry, favorite: !entry.favorite, updatedAt: new Date().toISOString() } : entry))} onCreate={saveCurrentFingerprint} onImport={(event) => void importFingerprints(event)} onExport={exportFingerprints} /> : <KnowledgePanel items={scopedKnowledge} scope={sideScope} scopeCounts={knowledgeScopeCounts} collapsedFolders={collapsedFolders} onScopeChange={setSideScope} onToggleFolder={toggleFolderCollapse} onRenameFolder={(from, to) => renameFolderIn('knowledge', from, to)} onDeleteFolder={(folder) => deleteFolderIn('knowledge', folder)} onUse={runKnowledgeQuery} onEdit={(item) => setKnowledgeDraft({ ...item })} onDelete={deleteKnowledge} onCreate={() => setKnowledgeDraft({ id: makeId(), parent: '', name: '', server: '', title: '', note: '', folder: '', scope: sideScope, updatedAt: new Date().toISOString() })} onImport={(event) => void importKnowledge(event)} onExport={exportKnowledge} />}
         </aside>}
 
         {layout.sidebar.visible && <div className={`splitter vertical ${layout.sidebar.side === 'right' ? 'is-right' : ''}`} onPointerDown={startLeftResize} />}
 
         <main className="main-dock">
+          {statsOpen ? <StatsPanel /> : <>
           {layout.sessionBar && <div className="session-bar" onPointerDown={startWindowDrag} onDoubleClick={(event) => { if ((event.target as HTMLElement).closest('button, input, select, a')) return; void window.electronAPI.toggleMaximizeWindow() }}>
             <button className={`tree-toggle ${layout.tabtree.visible ? 'is-on' : ''}`} type="button" onClick={() => setLayout((current) => ({ ...current, tabtree: { ...current.tabtree, visible: !current.tabtree.visible } }))} title="显示/隐藏标签树">
               <Icon name="folder" size={14} /> 标签树 <b>{sessions.length}</b>
@@ -814,7 +1047,7 @@ function App() {
             <div className="session-breadcrumb">
               {activePath.map((tab, index) => <span className={`breadcrumb-item ${index === activePath.length - 1 ? 'is-current' : ''} ${tab.kind}`} key={tab.id}>{index > 0 && <i>/</i>}<Icon name={tab.kind === 'browser' ? 'external' : 'search'} size={12} />{tab.label}</span>)}
             </div>
-            <div className="session-meta"><span>{activeSession.kind === 'browser' ? '内嵌浏览器' : 'FOFA 搜索'}</span><span>Quota {quota.newTodayRemaining ?? '--'} / {quota.newTotalRemaining ?? '--'}</span></div>
+            <div className="session-meta"><span>{activeSession.kind === 'browser' ? '内嵌浏览器' : `FOFA 搜索 · ${activeProvider === 'official' ? '官方' : '中转'}`}</span><span>{quotaLabel(quota, activeProvider)}</span></div>
           </div>}
 
           <div className="main-body">
@@ -833,6 +1066,9 @@ function App() {
               onNewSearch={() => { createSession(activeSession.id) }}
               onNewBrowser={() => { createBrowserSession('about:blank', activeSession.id) }}
               onReparent={reparentTab}
+              onFolderRename={renameTabFolder}
+              onFolderDelete={deleteTabFolder}
+              onTabFolder={moveTabToFolder}
             /></div>}
 
             <div className={`tab-content ${layout.editor.visible && layout.editor.dock === 'top' ? 'editor-top' : ''}`}>
@@ -844,19 +1080,19 @@ function App() {
                   <button className="button ghost command-save" type="button" onClick={() => saveCurrentFingerprint()} title="保存当前语句"><Icon name="save" size={14} /></button>
                 </section>
 
-                {!keyStatus.configured && <div className="notice-banner"><Icon name="settings" /><span>尚未配置第三方数据源。保存 API Key 后即可搜索，Key 由主进程安全存储。</span><button type="button" onClick={() => setSettingsOpen(true)}>立即配置</button></div>}
+                {!activeSource.configured && <div className="notice-banner"><Icon name="settings" /><span>尚未配置当前数据源（{PROVIDER_LABELS[activeProvider]}）。保存 API Key 后即可搜索，Key 由主进程安全存储。</span><button type="button" onClick={() => setSettingsOpen(true)}>立即配置</button></div>}
 
                 {layout.editor.visible && layout.editor.dock === 'top' && editorSlot}
 
                 {(layout.viewer || layout.insights.visible) && <div className="results-layout">
                   {layout.viewer && <section className="result-pane">
                     <header className="result-toolbar">
-                      <div className="result-heading"><div><p className="eyebrow">ASSET EXPLORER</p><h2>{activeSession.status === 'error' ? '搜索发生错误' : total > 0 ? `匹配 ${total.toLocaleString()} 条结果` : '主查看窗口'}</h2></div><div className="result-stats"><span><b>{groups.length}</b> 当前页独立 IP</span><span><b>{activeRecords.length}</b> 当前页资产</span>{activeSession.quota?.newTodayRemaining != null && <span><b>{activeSession.quota.newTodayRemaining}</b> 今日剩余</span>}</div></div>
+                      <div className="result-heading"><div><p className="eyebrow">ASSET EXPLORER</p><h2>{activeSession.status === 'error' ? '搜索发生错误' : total > 0 ? `匹配 ${total.toLocaleString()} 条结果` : '主查看窗口'}</h2></div><div className="result-stats"><span><b>{groups.length}</b> 当前页独立 IP</span><span><b>{activeRecords.length}</b> 当前页资产</span>{activeSession.quota?.newTodayRemaining != null && <span><b>{activeSession.quota.newTodayRemaining}</b> 今日剩余</span>}{activeSession.quota?.remainFreePoint != null && <span><b>{activeSession.quota.remainFreePoint}</b> 免费F点</span>}</div></div>
                       <div className="result-controls"><select value={activeSession.size} onChange={(event) => updateSession(activeSession.id, { size: Number(event.target.value) })}><option value={20}>20 / 页</option><option value={50}>50 / 页</option><option value={100}>100 / 页</option><option value={200}>200 / 页</option></select><button type="button" disabled={activeSession.page <= 1 || activeSession.status === 'loading'} onClick={() => void runSearch(activeSession.id, queryDraft, activeSession.page - 1)}>上一页</button><span>{activeSession.page} / {Math.max(1, Math.ceil(total / activeSession.size))}</span><button type="button" disabled={activeSession.page * activeSession.size >= total || activeSession.status === 'loading'} onClick={() => void runSearch(activeSession.id, queryDraft, activeSession.page + 1)}>下一页</button><button className="icon-button" type="button" title="刷新当前页" disabled={activeSession.status === 'loading'} onClick={() => void runSearch(activeSession.id, queryDraft, activeSession.page)}><Icon name="refresh" /></button></div>
                     </header>
 
                     {activeSession.status === 'error' && <div className="error-state"><Icon name="terminal" size={30} /><strong>请求失败</strong><p>{activeSession.error}</p><button type="button" onClick={() => void runSearch()}>重试</button></div>}
-                    {activeSession.status === 'loading' && <div className="loading-state"><span className="radar-spinner"><Icon name="radar" size={34} /></span><strong>正在查询第三方数据源</strong><p>请求已进入串行队列，约需 3–45 秒。</p></div>}
+                    {activeSession.status === 'loading' && <div className="loading-state"><span className="radar-spinner"><Icon name="radar" size={34} /></span><strong>正在查询{activeProvider === 'official' ? 'FOFA 官方 API' : '第三方数据源'}</strong><p>{activeProvider === 'official' ? '官方接口按 1 秒级限流排队，大结果集可能需要数十秒。' : '请求已进入串行队列，约需 3–45 秒。'}</p></div>}
                     {activeSession.status !== 'loading' && activeSession.status !== 'error' && groups.length === 0 && <div className="empty-state"><div className="empty-orbit"><Icon name="radar" size={38} /></div><p className="eyebrow">READY TO INVESTIGATE</p><h3>从一个指纹或 FOFA 语句开始</h3><p>可以载入左侧指纹，或使用查询编辑器中的语法快速操作。结果会按 IP 聚合为资产卡片。</p><div className="empty-actions"><button type="button" onClick={() => showSidebarTab('fingerprints')}><Icon name="library" /> 浏览指纹库</button><button type="button" onClick={() => showSidebarTab('knowledge')}><Icon name="knowledge" /> 查看知识库</button></div></div>}
                     {activeSession.status !== 'loading' && groups.length > 0 && <div className="asset-list">{groups.map((group) => <AssetCard group={group} key={group.ip} onOpenBrowser={(url) => createBrowserSession(url, activeSession.id)} />)}</div>}
                   </section>}
@@ -877,15 +1113,17 @@ function App() {
               </div>)}
             </div>
           </div>
+          </>}
         </main>
       </div>
 
-      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} keyStatus={keyStatus} onKeyStatusChange={setKeyStatus} notify={notify} />}
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} status={dataSource} onStatusChange={setDataSource} notify={notify} />}
 
       {presetManagerOpen && <PresetManager onClose={() => setPresetManagerOpen(false)} onInsert={(content) => { const merged = cardsToQuery(mergeCards(parseQueryToCards(queryDraft), parseQueryToCards(content))); setQueryDraft(merged); updateSession(activeSession.id, { query: merged }); notify('已并入查询编辑器', 'ok') }} onOverwrite={(content) => { setQueryDraft(content); updateSession(activeSession.id, { query: content }); notify('已用预设覆盖查询编辑器', 'ok') }} onNotify={notify} />}
 
       {fingerprintDraft && <Modal title="指纹详情" onClose={() => setFingerprintDraft(null)} width={650}><div className="modal-body form-grid">
         <label><span>名称</span><input autoFocus value={fingerprintDraft.name} onChange={(event) => setFingerprintDraft({ ...fingerprintDraft, name: event.target.value })} /></label>
+        <label><span>工作区</span><select value={fingerprintDraft.scope} onChange={(event) => setFingerprintDraft({ ...fingerprintDraft, scope: event.target.value as WorkspaceScope })}><option value="personal">私人工作区</option><option value="shared">开放工作区</option></select></label>
         <label><span>文件夹</span><input value={fingerprintDraft.folder} onChange={(event) => setFingerprintDraft({ ...fingerprintDraft, folder: event.target.value })} placeholder="例如：摄像头 / 国产设备" /></label>
         <label className="full"><span>FOFA 查询语句</span><textarea value={fingerprintDraft.query} onChange={(event) => setFingerprintDraft({ ...fingerprintDraft, query: event.target.value })} /></label>
         <label><span>产品</span><input value={fingerprintDraft.product} onChange={(event) => setFingerprintDraft({ ...fingerprintDraft, product: event.target.value })} /></label>
@@ -901,6 +1139,7 @@ function App() {
 
       {knowledgeDraft && <Modal title="知识库记录" onClose={() => setKnowledgeDraft(null)} width={600}><div className="modal-body form-grid">
         <label><span>名称 / 贴牌</span><input autoFocus value={knowledgeDraft.name} onChange={(event) => setKnowledgeDraft({ ...knowledgeDraft, name: event.target.value })} /></label>
+        <label><span>工作区</span><select value={knowledgeDraft.scope} onChange={(event) => setKnowledgeDraft({ ...knowledgeDraft, scope: event.target.value as WorkspaceScope })}><option value="personal">私人工作区</option><option value="shared">开放工作区</option></select></label>
         <label><span>母厂 / 关系</span><input value={knowledgeDraft.parent} onChange={(event) => setKnowledgeDraft({ ...knowledgeDraft, parent: event.target.value })} /></label>
         <label><span>Server</span><input value={knowledgeDraft.server} onChange={(event) => setKnowledgeDraft({ ...knowledgeDraft, server: event.target.value })} /></label>
         <label><span>Title</span><input value={knowledgeDraft.title} onChange={(event) => setKnowledgeDraft({ ...knowledgeDraft, title: event.target.value })} /></label>

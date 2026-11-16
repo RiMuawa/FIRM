@@ -8,27 +8,58 @@
   node: string
 }
 
-export interface FofaKeyStatus {
+/** FOFA 数据源：官方 API 或第三方中转 */
+export type FofaProvider = 'official' | 'relay'
+
+export interface FofaProviderStatus {
   configured: boolean
   encrypted: boolean
   source: 'file' | 'env' | 'none'
+  /** 仅官方数据源：是否配置了邮箱 */
+  emailConfigured?: boolean
+}
+
+export interface FofaDataSourceStatus {
+  active: FofaProvider
+  relay: FofaProviderStatus
+  official: FofaProviderStatus
 }
 
 export interface FofaKeyValidation {
   valid: boolean
+  provider: FofaProvider
+  message?: string
+  // 中转数据源字段
   firstUsedAt?: string
   expireTime?: string
   todayRemaining?: number
   totalRemaining?: number
-  message?: string
+  // 官方数据源字段
+  username?: string
+  isvip?: boolean
+  vipLevel?: number
+  remainFreePoint?: number
+  fofaPoint?: number
+  /** -1 表示不限制 */
+  remainApiQuery?: number
+  remainApiData?: number
+  expiration?: string
 }
 
 export interface FofaQuota {
+  /** 中转：调用后当天剩余次数 */
   newTodayRemaining?: number
+  /** 中转：调用后总剩余次数 */
   newTotalRemaining?: number
+  /** 官方：剩余免费 F 点 */
+  remainFreePoint?: number
+  /** 官方：剩余 F 点 */
+  fofaPoint?: number
 }
 
 export interface FofaSearchRequest {
+  /** 不传时使用当前启用的数据源 */
+  provider?: FofaProvider
   query: string
   page?: number
   size?: number
@@ -39,6 +70,7 @@ export interface FofaResultItem {
 }
 
 export interface FofaSearchResponse extends FofaQuota {
+  provider?: FofaProvider
   finalResults?: FofaResultItem[]
   data?: FofaResultItem[]
   total?: number
@@ -47,35 +79,25 @@ export interface FofaSearchResponse extends FofaQuota {
   errmsg?: string | null
 }
 
-export interface FofaStatsRequest {
-  query: string
-  fields?: string[]
+/** 单日使用统计（date 为本地时区 YYYY-MM-DD） */
+export interface UsageDayStats {
+  date: string
+  /** 成功的 FOFA 搜索次数 */
+  searches: number
+  /** 失败的搜索次数 */
+  failedSearches: number
+  /** 累计拉取的数据条数 */
+  records: number
 }
 
-export interface FofaAggregateItem {
-  name: string
-  count: number
-  detail?: Record<string, unknown>
-}
-
-export interface FofaStatsResponse extends FofaQuota {
-  query?: string
-  distinct?: Record<string, number>
-  aggs?: Record<string, FofaAggregateItem[]>
-  size?: number
-  time?: number
-  error?: boolean
-  errmsg?: string | null
-}
-
-export interface FofaAiQueryResponse extends FofaQuota {
-  invalid?: boolean
-  syntax?: string
-  message?: string | null
-  error?: boolean
-  errmsg?: string | null
-  todayRemaining?: number
-  totalRemaining?: number
+export interface UsageStatsSnapshot {
+  today: UsageDayStats
+  /** 最近 14 天（含今天，空档补零） */
+  recent: UsageDayStats[]
+  totalSearches: number
+  totalRecords: number
+  /** 已累计记录的天数 */
+  trackedDays: number
 }
 
 export interface ElectronAPI {
@@ -88,11 +110,11 @@ export interface ElectronAPI {
   isWindowMaximized: () => Promise<boolean>
   toggleMaximizeWindow: () => Promise<boolean>
   closeWindow: () => Promise<void>
-  getFofaKeyStatus: () => Promise<FofaKeyStatus>
-  saveFofaKey: (key: string) => Promise<FofaKeyStatus>
-  clearFofaKey: () => Promise<void>
-  validateFofaKey: () => Promise<FofaKeyValidation>
+  getFofaStatus: () => Promise<FofaDataSourceStatus>
+  setActiveFofaProvider: (provider: FofaProvider) => Promise<FofaDataSourceStatus>
+  saveFofaKey: (provider: FofaProvider, key: string, email?: string) => Promise<FofaDataSourceStatus>
+  clearFofaKey: (provider: FofaProvider) => Promise<FofaDataSourceStatus>
+  validateFofaKey: (provider?: FofaProvider) => Promise<FofaKeyValidation>
   searchFofa: (request: FofaSearchRequest) => Promise<FofaSearchResponse>
-  getFofaStats: (request: FofaStatsRequest) => Promise<FofaStatsResponse>
-  generateFofaQuery: (question: string) => Promise<FofaAiQueryResponse>
+  getUsageStats: () => Promise<UsageStatsSnapshot>
 }

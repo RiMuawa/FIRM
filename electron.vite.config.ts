@@ -13,6 +13,14 @@ export default defineConfig({
     server: {
       host: '127.0.0.1'
     },
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/renderer/index.html'),
+          design: resolve('src/renderer/design.html')
+        }
+      }
+    },
     resolve: {
       alias: {
         '@': resolve('src/renderer/src')

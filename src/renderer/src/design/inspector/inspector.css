@@ -1,0 +1,366 @@
+/* 设计复刻页检视器样式。全部以 .des- 前缀隔离，不污染复刻的应用界面。 */
+
+webview {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.des-webview-stub {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #64748b;
+  background:
+    linear-gradient(135deg, rgba(55, 216, 180, 0.03), transparent 40%),
+    #0b101a;
+}
+
+.des-webview-stub strong { color: #9fb0c6; font-size: 14px; }
+.des-webview-stub p { max-width: 340px; text-align: center; font-size: 11px; line-height: 1.7; margin: 0; }
+.des-webview-stub code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: #37d8b4;
+  background: #101a29;
+  border: 1px solid #1d2a3d;
+  border-radius: 4px;
+  padding: 2px 10px;
+  max-width: 80%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.des-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100000;
+  color: #c9d4e3;
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+.des-root * { box-sizing: border-box; }
+
+/* ---- 悬浮工具条 ---- */
+
+.des-toolbar {
+  position: absolute;
+  top: 46px;
+  right: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: min(760px, 74vw);
+  padding: 6px 8px;
+  pointer-events: none;
+  background: rgba(13, 21, 34, 0.94);
+  border: 1px solid #2a3547;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+  font-size: 12px;
+}
+
+.des-toolbar button, .des-toolbar .des-toolbar-group, .des-toolbar .des-toolbar-sep {
+  pointer-events: auto;
+}
+
+.des-toolbar button {
+  border: 1px solid #2a3547;
+  background: #131d2e;
+  color: #c9d4e3;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.des-toolbar button:hover { border-color: #37d8b4; color: #e8fff8; }
+.des-toolbar button.is-on { background: rgba(55, 216, 180, 0.16); border-color: #37d8b4; color: #7ee6d0; }
+
+.des-toolbar-sep { width: 1px; height: 16px; background: #2a3547; }
+.des-toolbar-group { display: flex; align-items: center; gap: 4px; }
+.des-toolbar-group > em { font-style: normal; color: #66748c; font-size: 11px; margin-right: 2px; }
+
+/* ---- 映射表面板 ---- */
+
+.des-panel {
+  position: absolute;
+  top: 96px;
+  right: 10px;
+  bottom: 10px;
+  width: 382px;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  background: rgba(10, 16, 27, 0.97);
+  border: 1px solid #2a3547;
+  border-radius: 12px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.des-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #1d2a3d;
+}
+
+.des-panel-head strong { font-size: 13px; color: #e6edf6; }
+.des-panel-head b {
+  font-size: 11px;
+  font-weight: 600;
+  color: #37d8b4;
+  background: rgba(55, 216, 180, 0.12);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+
+.des-panel-search {
+  flex: 1;
+  min-width: 0;
+  background: #0e1624;
+  border: 1px solid #26324a;
+  border-radius: 6px;
+  color: #c9d4e3;
+  font-size: 11px;
+  padding: 4px 8px;
+  outline: none;
+}
+
+.des-panel-search:focus { border-color: #37d8b4; }
+.des-panel-close { border: 1px solid #2a3547; background: transparent; color: #8b99b0; border-radius: 6px; cursor: pointer; font-size: 11px; padding: 3px 8px; }
+.des-panel-close:hover { color: #ff8f8f; border-color: #ff8f8f; }
+
+.des-panel-filters { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px; border-bottom: 1px solid #1d2a3d; }
+.des-chip {
+  border: 1px solid #2a3547;
+  background: transparent;
+  color: #8b99b0;
+  border-radius: 20px;
+  padding: 2px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.des-chip.is-on { background: rgba(90, 162, 255, 0.15); border-color: #5aa2ff; color: #a9c9ff; }
+
+.des-panel-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+.des-panel-body::-webkit-scrollbar { width: 8px; }
+.des-panel-body::-webkit-scrollbar-thumb { background: #243248; border-radius: 4px; }
+
+.des-group-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #0c1320;
+  border-bottom: 1px solid #16202f;
+  border-top: 1px solid #16202f;
+  cursor: pointer;
+  user-select: none;
+}
+
+.des-group-head strong { font-size: 11px; color: #7f8ea6; letter-spacing: 0.04em; }
+.des-group-head small { color: #556277; font-size: 10px; }
+.des-group-head .des-caret { margin-left: auto; color: #556277; font-size: 10px; }
+
+.des-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 14px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+
+.des-row:hover { background: rgba(90, 162, 255, 0.08); border-left-color: #5aa2ff; }
+.des-row.is-flash { animation: des-row-flash 0.45s ease 3; }
+
+.des-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: #37d8b4; box-shadow: 0 0 5px rgba(55, 216, 180, 0.7); }
+.des-row.is-hidden .des-dot { background: #414d63; box-shadow: none; }
+.des-row.is-hidden { opacity: 0.55; }
+
+.des-id {
+  flex: 0 1 auto;
+  min-width: 90px;
+  max-width: 55%;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  color: #7ee6d0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.des-kind {
+  flex: none;
+  font-size: 10px;
+  color: #8b99b0;
+  border: 1px solid #26324a;
+  border-radius: 4px;
+  padding: 0 4px;
+  line-height: 1.5;
+}
+
+.des-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: #9aa7bb;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.des-panel-foot { padding: 8px 12px; border-top: 1px solid #1d2a3d; color: #556277; font-size: 10.5px; line-height: 1.6; }
+
+/* ---- 高亮层 ---- */
+
+.des-hl {
+  position: absolute;
+  border: 1.5px solid #37d8b4;
+  background: rgba(55, 216, 180, 0.09);
+  border-radius: 3px;
+}
+
+.des-hl--row { border-color: #5aa2ff; background: rgba(90, 162, 255, 0.1); }
+
+.des-hl-label {
+  position: absolute;
+  transform: translateY(calc(-100% - 3px));
+  background: #37d8b4;
+  color: #04241c;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+  max-width: 60vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.des-hl--row .des-hl-label { background: #5aa2ff; color: #0a1a33; }
+
+.des-flash {
+  position: absolute;
+  border: 2px solid #ffd166;
+  background: rgba(255, 209, 102, 0.14);
+  border-radius: 4px;
+  animation: des-flash-pulse 0.4s ease 3;
+}
+
+@keyframes des-flash-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 209, 102, 0.6); }
+  50% { box-shadow: 0 0 0 6px rgba(255, 209, 102, 0); }
+}
+
+@keyframes des-row-flash {
+  0%, 100% { background: transparent; }
+  50% { background: rgba(255, 209, 102, 0.22); }
+}
+
+/* ---- 右键编号卡片 ---- */
+
+.des-ctx {
+  position: absolute;
+  width: 308px;
+  pointer-events: auto;
+  background: #0d1522;
+  border: 1px solid #2f3c52;
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.6);
+}
+
+.des-ctx-id {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #7ee6d0;
+  background: rgba(55, 216, 180, 0.08);
+  border: 1px solid rgba(55, 216, 180, 0.35);
+  border-radius: 6px;
+  padding: 5px 9px;
+  cursor: pointer;
+  word-break: break-all;
+}
+
+.des-ctx-id:hover { background: rgba(55, 216, 180, 0.16); }
+.des-ctx-id span { flex: none; font-size: 11px; color: #556277; font-weight: 400; }
+
+.des-ctx-meta { display: flex; align-items: center; gap: 6px; margin: 8px 0 6px; flex-wrap: wrap; }
+.des-ctx-meta .des-kind { font-size: 10px; }
+.des-ctx-vis { font-size: 10.5px; color: #8b99b0; }
+.des-ctx-vis.is-hidden { color: #ff9d76; }
+
+.des-ctx-label {
+  font-size: 11px;
+  color: #9aa7bb;
+  line-height: 1.6;
+  max-height: 72px;
+  overflow-y: auto;
+  word-break: break-all;
+  margin-bottom: 10px;
+}
+
+.des-ctx-actions button {
+  width: 100%;
+  border: 1px solid #2a3547;
+  background: #131d2e;
+  color: #c9d4e3;
+  border-radius: 6px;
+  padding: 5px 0;
+  font-size: 11px;
+  cursor: pointer;
+}
+.des-ctx-actions button:hover { border-color: #5aa2ff; color: #a9c9ff; }
+
+/* ---- 检视器自身 toast ---- */
+
+.des-toasts {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.des-toast {
+  background: rgba(13, 21, 34, 0.96);
+  border: 1px solid #2a3547;
+  border-radius: 20px;
+  padding: 5px 16px;
+  font-size: 11.5px;
+  color: #c9d4e3;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  animation: des-toast-in 0.18s ease;
+}
+
+.des-toast.warn { border-color: #6b5a25; color: #ffd98a; }
+.des-toast.error { border-color: #6b2b2b; color: #ff9d9d; }
+
+@keyframes des-toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}

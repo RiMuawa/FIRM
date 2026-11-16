@@ -1,5 +1,8 @@
 ﻿import type { FofaResultItem } from '../../shared/types'
 
+/** 工作区：私人（个人研究，不分享）或开放（供多人共享） */
+export type WorkspaceScope = 'personal' | 'shared'
+
 export interface Fingerprint {
   id: string
   name: string
@@ -13,6 +16,7 @@ export interface Fingerprint {
   model: string
   note: string
   folder: string
+  scope: WorkspaceScope
   favorite: boolean
   createdAt: string
   updatedAt: string
@@ -26,7 +30,29 @@ export interface KnowledgeEntry {
   title: string
   note: string
   folder: string
+  scope: WorkspaceScope
   updatedAt: string
+}
+
+export interface FolderGroup<T> {
+  folder: string
+  items: T[]
+}
+
+/** 按文件夹名分组；空文件夹名（未归档）排在最后 */
+export function groupByFolder<T extends { folder: string }>(items: T[]): FolderGroup<T>[] {
+  const map = new Map<string, T[]>()
+  for (const item of items) {
+    const key = item.folder?.trim() || ''
+    const list = map.get(key) || []
+    list.push(item)
+    map.set(key, list)
+  }
+  const groups = [...map.entries()].map(([folder, list]) => ({ folder, items: list }))
+  groups.sort((left, right) => left.folder.localeCompare(right.folder, 'zh'))
+  const unfiled = groups.findIndex((group) => group.folder === '')
+  if (unfiled > -1) groups.push(groups.splice(unfiled, 1)[0])
+  return groups
 }
 
 export interface AssetRecord {
@@ -95,9 +121,16 @@ function writeStorage(key: string, value: unknown): void {
   }
 }
 
+/** 旧数据没有 scope 字段时按私人工作区处理 */
+function normalizeScope(value: unknown): WorkspaceScope {
+  return value === 'shared' ? 'shared' : 'personal'
+}
+
 export function loadFingerprints(): Fingerprint[] {
   const values = parseStorage<Fingerprint[]>(STORAGE.fingerprints, [])
-  return Array.isArray(values) ? values.filter((item) => item && typeof item.query === 'string') : []
+  return Array.isArray(values)
+    ? values.filter((item) => item && typeof item.query === 'string').map((item) => ({ ...item, folder: item.folder || '', scope: normalizeScope(item.scope) }))
+    : []
 }
 
 export function saveFingerprints(items: Fingerprint[]): void {
@@ -106,7 +139,9 @@ export function saveFingerprints(items: Fingerprint[]): void {
 
 export function loadKnowledge(): KnowledgeEntry[] {
   const values = parseStorage<KnowledgeEntry[]>(STORAGE.knowledge, [])
-  return Array.isArray(values) ? values.filter((item) => item && typeof item.name === 'string') : []
+  return Array.isArray(values)
+    ? values.filter((item) => item && typeof item.name === 'string').map((item) => ({ ...item, folder: item.folder || '', scope: normalizeScope(item.scope) }))
+    : []
 }
 
 export function saveKnowledge(items: KnowledgeEntry[]): void {
@@ -297,7 +332,7 @@ export function toggleCondition(condition: string): string {
   return trimmed.startsWith('!') ? trimmed.slice(1).trim() : `!${trimmed}`
 }
 
-export function createFingerprint(query: string): Fingerprint {
+export function createFingerprint(query: string, scope: WorkspaceScope = 'personal', folder = ''): Fingerprint {
   const now = new Date().toISOString()
   const product = productFromQuery(query)
   return {
@@ -312,7 +347,8 @@ export function createFingerprint(query: string): Fingerprint {
     vendor: '',
     model: '',
     note: '',
-    folder: '',
+    folder,
+    scope,
     favorite: false,
     createdAt: now,
     updatedAt: now
