@@ -1,4 +1,4 @@
-﻿# IoT Worktable
+﻿# Fofa Iot Ripository Manager
 
 面向 IoT 信息搜集的桌面工作台，基于 **Electron + electron-vite + React + TypeScript**。
 
